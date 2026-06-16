@@ -28,18 +28,17 @@ A **test client** (`tools/fake_client`) stands in for the real device so the who
 
 ---
 
-## What works (and where)
+## Repo layout
 
-| Piece | Status | Where it runs |
-|---|---|---|
-| ESP32 firmware: sensor, WiFi, OLED dashboard, status LED | ✅ runs | Wokwi simulator |
-| Server `telemetryd` + live streaming (HELLO/ACK/heartbeats) | ✅ runs | any Linux / WSL |
-| All unit + concurrency tests (incl. ThreadSanitizer) | ✅ pass | any Linux / WSL |
-| Imaging path (frame → Sobel → BMP) | ✅ pass | any Linux / WSL |
-| Kernel module `/dev/telemetry` loaded | needs real Linux | Ubuntu VM (WSL2's custom kernel may block `insmod`) |
-
-The firmware proves it produces correct packets via a host test that checks its bytes against the server's own parser — so the device and server agree byte-for-byte.
-
+```
+pulselink/
+├── common/    protocol.h, checksum — the wire contract
+├── server/    telemetryd: listeners, workers, device table, record sinks
+├── tools/     fake_client (test device)
+├── firmware/  ESP32 / FreeRTOS firmware (Wokwi) + single-file sketch
+├── kmod/      /dev/telemetry character driver + telemetry_cat reader
+└── imaging/   3x3 convolution / Sobel / hand-rolled BMP writer
+```
 ---
 
 ## Quick start
