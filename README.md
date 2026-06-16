@@ -83,7 +83,7 @@ Packet types: HELLO / HELLO_ACK / SENSOR / ACK / HEARTBEAT (UDP) / FRAME / ERROR
 ---
 
 <details>
-<summary><b>Design decisions (the deep technical detail — click to expand)</b></summary>
+<summary><b>Design decisions</b></summary>
 
 These are the "why did you build it this way" answers — the interview talking points.
 
