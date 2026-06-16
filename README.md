@@ -1,6 +1,6 @@
 # PulseLink — IoT Sensor Telemetry 
 
-**In one sentence:** a tiny sensor device measures temperature and humidity, sends those readings over the network to a server, the server files each reading into a special slot in the Linux operating system, and a small reader prints them live.
+A tiny sensor device measures temperature and humidity, sends those readings over the network to a server, the server files each reading into a special slot in the Linux operating system, and a small reader prints them live.
 
 It's a project in C that touches three areas that rarely appear together: **embedded firmware** (a simulated ESP32 running FreeRTOS), a **multithreaded network server**, and a **Linux kernel driver** — all speaking one shared message format. Runs at ₹0 (free online simulator + a Linux machine).
 
