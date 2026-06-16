@@ -1,207 +1,174 @@
 # PulseLink — IoT Sensor Telemetry Pipeline
 
-A FreeRTOS device (simulated ESP32) streams sensor telemetry over a custom
-binary protocol to a multithreaded Linux server, which writes records into a
-Linux character-device driver that any number of userspace consumers read live.
+**In one sentence:** a tiny sensor device measures temperature and humidity, sends those readings over the network to a server, the server files each reading into a special slot in the Linux operating system, and a small reader prints them live.
+
+It's a portfolio project in C that touches three areas that rarely appear together: **embedded firmware** (a simulated ESP32 running FreeRTOS), a **multithreaded network server**, and a **Linux kernel driver** — all speaking one shared message format. Runs at ₹0 (free online simulator + a Linux machine).
 
 ```
-ESP32 (Wokwi, FreeRTOS) --TCP/UDP--> telemetryd (C, pthreads) --write()--> /dev/telemetry --read()--> telemetry_cat
+ESP32 firmware  --TCP/UDP-->  telemetryd server  --write()-->  /dev/telemetry  --read()-->  telemetry_cat
+  (reads sensor,             (decodes, tracks                (Linux kernel             (prints the
+   sends packets)             devices, files it)              char device)              live stream)
 ```
 
-## Build order
-The stages are independent but build in this order so each has something real
-to talk to: **server (Stage 2) → firmware (Stage 1) → kernel module (Stage 3) → imaging (Stage 4)**.
+---
+
+## The four pieces, in plain words
+
+1. **The device** (`firmware/`) — a simulated ESP32 chip with a temperature/humidity sensor. Every 2 seconds it reads the sensor, wraps the numbers in a small packet, and sends it over WiFi. If the network drops, it keeps retrying calmly. Runs in [Wokwi](https://wokwi.com) — no physical hardware needed.
+
+2. **The server** (`server/` → `telemetryd`) — listens for packets, checks each one isn't corrupted, records which device sent what, and passes it along. Handles many devices at once.
+
+3. **The Linux "mailbox"** (`kmod/` → `/dev/telemetry`) — a kernel driver that makes the server's readings show up as a *file* on Linux. The server writes readings in; anyone can read them out live.
+
+4. **The reader** (`kmod/telemetry_cat`) — opens that mailbox file and prints each reading as it arrives.
+
+There's also a **bonus imaging path** (`imaging/`): the device can send a small picture, and the server runs edge-detection on it and saves a BMP — all written from scratch, no image libraries.
+
+A **test client** (`tools/fake_client`) stands in for the real device so the whole server + kernel pipeline can be demonstrated on one machine.
+
+---
+
+## What works (and where)
+
+| Piece | Status | Where it runs |
+|---|---|---|
+| ESP32 firmware: sensor, WiFi, OLED dashboard, status LED | ✅ runs | Wokwi simulator |
+| Server `telemetryd` + live streaming (HELLO/ACK/heartbeats) | ✅ runs | any Linux / WSL |
+| All unit + concurrency tests (incl. ThreadSanitizer) | ✅ pass | any Linux / WSL |
+| Imaging path (frame → Sobel → BMP) | ✅ pass | any Linux / WSL |
+| Kernel module `/dev/telemetry` loaded | needs real Linux | Ubuntu VM (WSL2's custom kernel may block `insmod`) |
+
+The firmware proves it produces correct packets via a host test that checks its bytes against the server's own parser — so the device and server agree byte-for-byte.
+
+---
+
+## Quick start
+
+```bash
+# 1. build + run the server
+cd server && make && ./telemetryd -p 9000 -u 9001 -n 16
+
+# 2. in another terminal, drive it with the test device
+cd tools && make
+./fake_client -h 127.0.0.1 -p 9000 -u 9001 -d 0x1001 -r 10 -n 50
+```
+
+You'll watch the server register the device, decode live temperature/humidity readings, and ACK every 8th packet. That's the pipeline working end to end.
+
+```bash
+# run the test suite (no network needed)
+cd common  && make test                              # checksum
+cd server  && make dt_test    && ./dt_test           # device table, 8-thread stress
+cd server  && make integ      && ./integ_test        # full server pipeline
+cd server  && make integ_tsan && ./integ_test_tsan   # same, race-checked
+cd imaging && make test                              # imaging path
+```
+
+---
+
+## The message format (the wire protocol)
+
+Every packet starts with a 12-byte header (all multi-byte fields big-endian):
+
+| offset | size | field |
+|---|---|---|
+| 0 | 2 | magic `0x504C` ("PL") |
+| 2 | 1 | version `0x01` |
+| 3 | 1 | type |
+| 4 | 4 | device_id |
+| 8 | 2 | payload length |
+| 10 | 2 | checksum (RFC-1071) |
+
+Packet types: HELLO / HELLO_ACK / SENSOR / ACK / HEARTBEAT (UDP) / FRAME / ERROR. The full layouts live in `common/protocol.h` — the single source of truth, compiled identically on the ESP32 and the server.
+
+---
 
 ## Repo layout
+
 ```
 pulselink/
-├── common/    protocol.h, checksum.c, checksum_test.c   <-- the wire contract
+├── common/    protocol.h, checksum — the wire contract
 ├── server/    telemetryd: listeners, workers, device table, record sinks
-├── tools/     fake_client (test rig), telemetry_cat (live reader)
-├── firmware/  ESP32 / FreeRTOS firmware (Wokwi)
-├── kmod/      /dev/telemetry character driver + UAPI header
-├── imaging/   3x3 convolution / Sobel / hand-rolled BMP writer (Stage 4)
-└── tests/     scripted scenarios driven by fake_client
+├── tools/     fake_client (test device)
+├── firmware/  ESP32 / FreeRTOS firmware (Wokwi) + single-file sketch
+├── kmod/      /dev/telemetry character driver + telemetry_cat reader
+└── imaging/   3x3 convolution / Sobel / hand-rolled BMP writer
 ```
 
-## The wire protocol (summary)
-All multi-byte fields are big-endian. Every packet starts with a 12-byte header:
+---
 
-| off | size | field        |
-|-----|------|--------------|
-| 0   | 2    | magic 0x504C |
-| 2   | 1    | version 0x01 |
-| 3   | 1    | type         |
-| 4   | 4    | device_id    |
-| 8   | 2    | payload_len  |
-| 10  | 2    | checksum     |
+## Milestones (all complete, 8/8)
 
-Types: HELLO / HELLO_ACK / SENSOR / ACK / HEARTBEAT(UDP) / FRAME / ERROR.
-Full detail and payload layouts live in `common/protocol.h` — the single source
-of truth, compiled identically on both the ESP32 and the server.
+- **M1** wire protocol + RFC-1071 checksum
+- **M2** server: TCP listener + worker state machine + HELLO handshake; fake_client
+- **M3** server: device table, sensor handling + ACK-every-8th, UDP heartbeats, record sink; ThreadSanitizer-clean
+- **M4** firmware: FreeRTOS sampler → queue → reporter + heartbeat; framing host-tested vs server
+- **M5** firmware: WiFi + TCP uplink, reconnect-with-backoff, watchdog, OLED dashboard + status LED
+- **M6** kernel module: `/dev/telemetry`, write/read + wait queue, drop-oldest ring; `telemetry_cat`
+- **M7** kernel ioctl (stats/reset) + `/proc/pulselink`; server `-s dev` writes into `/dev/telemetry`
+- **M8** imaging: `PKT_FRAME` reassembly, 3×3 Sobel, hand-rolled BMP writer
 
-## Build & test
-```
-cd common && make test      # builds and runs the checksum unit tests
-```
+---
 
-## Milestone tracker
-- [x] **M1** protocol.h + checksum + unit test (cross-checked vs RFC 1071) ✅
-- [x] **M2** server: TCP listener + worker state machine + HELLO handshake; fake_client test rig ✅
-- [x] **M3** server: device table, full sensor handling + ACK-every-8th, UDP heartbeats, record sink; tsan-clean → **stage2-done** ✅
-- [x] **M4** Wokwi firmware: FreeRTOS sampler→queue→reporter + heartbeat; framing host-tested vs server ✅
-- [x] **M5** Wokwi firmware: Wi-Fi + TCP uplink, HELLO handshake, reconnect-with-backoff, UDP heartbeat, task watchdog → **stage1-done** ✅
-- [x] **M6** kernel module: `/dev/telemetry` misc device, write/read + wait queue, spinlock-guarded drop-oldest ring; `telemetry_cat` reader; ring host-tested ✅
-- [x] **M7** kernel `ioctl` (stats/reset) + `/proc/pulselink`; server `-s dev` writes into `/dev/telemetry` → full pipeline live → **stage3-done** ✅
-- [x] **M8** imaging path: `PKT_FRAME` reassembly, 3×3 convolution / Sobel edge detection, hand-rolled BMP writer; server `-F` emits edge BMPs from received frames → **stage4-done** ✅
+<details>
+<summary><b>Design decisions (the deep technical detail — click to expand)</b></summary>
 
-**Status: complete (8/8).** All four stages ship and interoperate — the ESP32
-firmware, the multithreaded `telemetryd`, the `/dev/telemetry` kernel driver, and
-the Stage 4 imaging path all speak the same protocol/record formats, verified end
-to end. The server can stream sensor readings into the kernel device *and* turn
-received `PKT_FRAME` camera frames into edge-detected BMPs.
+These are the "why did you build it this way" answers — the interview talking points.
 
-## Design decisions (interview talking points — grows per stage)
-- **Checksum = RFC 1071 ones'-complement (the "IP checksum").** Cheap to compute
-  (add + carry-fold + complement), endian-defined, catches all single-bit and
-  most burst errors. Not cryptographic — it guards against line noise and
-  truncation, not tampering. It has a self-verifying property (sum payload +
-  checksum, complement → 0) which the unit test exercises directly.
-- **`protocol.h` carries no `arpa/inet.h` / lwIP dependency.** Byte-swapping
-  happens at call sites so the identical header compiles on the ESP32 and Linux.
-  `_Static_assert` on every struct size means a stray padding byte breaks the
-  build instead of corrupting the wire.
-- **Signal handling uses the self-pipe trick.** SIGINT/SIGTERM does only
-  async-signal-safe work (an atomic store + a one-byte `write()` to a pipe). The
-  TCP listener `poll()`s the listening socket *and* the pipe's read end, so a
-  signal becomes a pollable event and shutdown is immediate — no blocking in
-  `accept()`, no real work inside the handler.
-- **Concurrency cap = counting semaphore, reject-at-the-door.** The listener
-  `sem_trywait`s *after* `accept()` and closes the connection when full, rather
-  than `sem_wait`-blocking the accept loop. This keeps the server responsive to
-  shutdown and surfaces overload instead of hiding it in the listen backlog.
-- **`read_n` over `recv`.** TCP is a byte stream; a single `recv` can hand back
-  half a header. `read_n` loops to the exact count and reports EOF (short read)
-  vs error vs `SO_RCVTIMEO` timeout (EAGAIN) distinctly, which is what lets the
-  worker reap silent peers and frame messages reliably.
-- **`MSG_NOSIGNAL` on every send** so a vanished peer yields `EPIPE` instead of
-  killing the process with `SIGPIPE`.
-- **Device table: rwlock guards structure, atomics guard fields.** The rwlock
-  protects only the bucket chains — *inserting* a new device takes the write
-  lock, *looking one up* takes the read lock. Every hot per-device field
-  (counters, last_seq, last_seen, state) is a C11 atomic updated with no table
-  lock at all. This is what makes the rwlock the right call: inserts are rare
-  (once per new device), lookups + the stats dump are constant, so N workers
-  update N different devices fully in parallel and a SIGUSR1 reader never blocks
-  them. A plain mutex would serialize all of that.
-- **Devices are never removed — only flipped to OFFLINE.** That single decision
-  is what makes the lock-free field updates safe: a `device_t*` handed to a
-  worker stays valid for the whole process lifetime, so the worker can keep
-  updating atomics without re-taking the table lock or fearing a free().
-- **`get_or_create` = read-lock lookup, then upgrade-with-recheck.** POSIX
-  rwlocks can't atomically upgrade, so the miss path drops the read lock, takes
-  the write lock, and *re-searches* before inserting (another thread may have
-  created the device in the gap). Verified race-free with the 8-thread,
-  160k-op `dt_test` under ThreadSanitizer.
-- **One `sink_t` v-table seam for the record store.** The worker writes each
-  reading through `sink->write_record(sensor_record_t*)`. The M3 sink is an
-  in-memory ring buffer; the Stage-3 `/dev/telemetry` kernel device slots in
-  behind the identical interface with no worker changes, and the record layout
-  already matches the planned kernel struct.
-- **Shutdown wakes each thread the cheapest way that fits it.** The
-  latency-critical accept loop uses the self-pipe for an instant wakeup; the UDP
-  and reaper loops just re-check the flag on a 500ms tick; detached workers wake
-  on a 2s recv tick (which also doubles as the 30s dead-peer reap counter). Main
-  joins the three service threads, then drains workers via an `active_workers`
-  atomic before tearing down shared state.
-- **SIGUSR1 stays trivially async-signal-safe.** The handler only sets an atomic
-  flag; the reaper thread notices it and does the actual `dt_dump` under the
-  read lock — proving rwlock read-concurrency while workers keep writing.
-- **Firmware (M4): bounded queue decouples sampling from uplink.** A fixed-length
-  FreeRTOS queue between the sampler and the uplink task means the producer never
-  blocks on a stalled consumer, and a full queue is a *counted drop* rather than
-  unbounded RAM growth. Drop-newest on the device (if the queue fills, the link
-  is effectively down and M5's reconnect is what matters) vs drop-oldest in the
-  kernel ring (a slow reader shouldn't be served stale frames) — same primitive,
-  opposite policy, each justified. Tasks are pinned across both ESP32 cores so
-  the blocking network send added in M5 can't jitter the sample cadence.
-- **Firmware framing is the same host-tested C as the server.** `pl_build_sensor()`
-  writes big-endian bytes explicitly (no `htons`, no packing reliance) so it
-  compiles identically on the ESP32 and the host; `fw_frame_test` builds a packet
-  and parses it back through the server's own `pl_parse_header`, proving the two
-  ends agree byte-for-byte before any real socket exists.
-- **Firmware (M5): reconnect with exponential backoff + a task watchdog.** A
-  flapping link doesn't become a tight reconnect spin — backoff doubles to a 16s
-  cap and resets on a successful handshake — and the watchdog (fed *through* the
-  backoff waits) resets the chip if the network task ever wedges. The bounded
-  queue keeps buffering during an outage, so a transient disconnect costs the
-  oldest unsent samples, not a crash. The reply path uses a `read_exact` helper
-  with the same byte-stream contract as the server's `read_n`.
-- **Kernel driver (M6): spinlock over mutex, drop-oldest ring, misc device.**
-  The locked critical section is a bounded O(1) record copy with no sleeping, and
-  all user-copying happens outside the lock — so a spinlock is correct and
-  cheaper than a mutex. An empty ring blocks the reader on a wait queue
-  (`-EAGAIN` for `O_NONBLOCK`, `-ERESTARTSYS` on a signal, plus `poll` support).
-  The ring drops the *oldest* record when full (a slow reader falls behind on
-  stale data rather than stalling the server) — deliberately the opposite of the
-  firmware's drop-newest. `misc_register` auto-creates `/dev/telemetry` with far
-  less boilerplate than a manual cdev. The ring logic is freestanding C, so the
-  same object the kernel links is host unit-tested.
-- **Stage 3 wiring (M7): ioctl + /proc, and a record sink over write(2).** The
-  driver exposes `PL_IOC_GET_STATS`/`PL_IOC_RESET` (a stable binary interface for
-  tools) and `/proc/pulselink` (the same counters as text for a quick `cat`),
-  both read under the ring spinlock. The server's `-s dev` sink just `write(2)`s
-  the native `sensor_record_t` into `/dev/telemetry` — no byte-swapping, because
-  this hop is local IPC on one machine, unlike the big-endian network wire. If the
-  module isn't loaded the sink falls back to the in-memory ring rather than
-  hard-failing. The record path was proven end-to-end on the host (sink writes →
-  reader decodes via the kernel's own struct) before ever touching a real `.ko`.
-- **Imaging (M8): frames on the same protocol, a hand-rolled BMP, no image libs.**
-  A camera frame is just `ceil(w*h/1024)` `PKT_FRAME` packets — same header and
-  checksum as everything else — so Stage 4 needed no new transport. The server
-  reassembles defensively (dimension caps, exact per-chunk lengths, consistent
-  `chunk_count`, dedup) then runs an edge-clamped 3×3 Sobel and writes an 8-bit
-  grayscale BMP by hand (explicit little-endian headers, palette, bottom-up rows,
-  4-byte padding) — the little-endian mirror of the wire code. The whole path is
-  host-tested, and `server/frame_e2e_test` drives a chunked frame through the real
-  `client_worker` and checks the BMP it produces is byte-identical to the source.
-```
+**Protocol & checksum**
+- **RFC-1071 ones'-complement checksum** ("the IP checksum"): cheap (add + carry-fold + complement), endian-defined, catches all single-bit and most burst errors. Not cryptographic — guards against line noise, not tampering. Its self-verifying property is exercised directly by the unit test.
+- **`protocol.h` has no networking dependency.** Byte-swapping happens at call sites so the identical header compiles on the ESP32 and Linux. A `_Static_assert` on every struct size means a stray padding byte breaks the build instead of corrupting the wire.
 
-## Running it
-```
-# unit + concurrency tests (no network needed)
-cd server
-make dt_test    && ./dt_test       # device table: unit + 8-thread stress
-make integ      && ./integ_test     # full worker pipeline over socketpairs
-make integ_tsan && ./integ_test_tsan # same, under ThreadSanitizer (race-check)
+**Server concurrency**
+- **Self-pipe trick for shutdown.** SIGINT/SIGTERM does only async-signal-safe work (an atomic store + a one-byte pipe write); the listener `poll()`s the socket *and* the pipe, so shutdown is immediate with no work inside the handler.
+- **Counting semaphore, reject-at-the-door.** The listener tries the semaphore *after* `accept()` and closes the connection when full, rather than blocking the accept loop — overload is surfaced, not hidden in the backlog.
+- **`read_n` over `recv`.** TCP is a byte stream; one `recv` can return half a header. `read_n` loops to the exact count and distinguishes EOF vs error vs timeout, which is what lets the worker frame messages and reap dead peers reliably.
+- **`MSG_NOSIGNAL` on every send** so a vanished peer yields `EPIPE` instead of killing the process.
+- **Device table: rwlock guards the structure, atomics guard the fields.** The rwlock protects only the bucket chains (insert = write lock, lookup = read lock); hot per-device fields are C11 atomics updated with no table lock. Inserts are rare, lookups are constant, so N workers update N devices in parallel and the stats dumper never blocks them — exactly where a rwlock beats a mutex.
+- **Devices are never removed, only flipped OFFLINE.** That makes the lock-free field updates safe: a `device_t*` handed to a worker stays valid for the process lifetime.
+- **`get_or_create` upgrades with a re-check.** POSIX rwlocks can't atomically upgrade, so the miss path drops the read lock, takes the write lock, and re-searches before inserting. Verified race-free under ThreadSanitizer with an 8-thread, 160k-op stress test.
+- **One `sink_t` v-table** for the record store: the in-memory ring (M3) and the `/dev/telemetry` kernel device (M7) slot in behind the same interface with no worker changes.
 
-# live server
-make
-./telemetryd -p 9000 -u 9001 -n 16              # TCP 9000, UDP heartbeats 9001
-kill -USR1 $(pgrep telemetryd)                  # dump device table + sink stats
-kill -INT  $(pgrep telemetryd)                  # graceful shutdown
+**Firmware**
+- **Bounded queue decouples sampling from uplink.** A full queue is a *counted drop*, not unbounded RAM growth. The device drops the *newest* (if the queue's full the link is down, so reconnect is what matters); the kernel ring drops the *oldest* (a slow reader shouldn't get stale frames) — same primitive, opposite policy, each justified.
+- **Same host-tested framing as the server.** `pl_build_sensor()` writes big-endian bytes explicitly (no `htons`, no packing reliance); `fw_frame_test` builds a packet and parses it back through the server's own parser, proving both ends agree before any socket exists.
+- **Reconnect with exponential backoff + a task watchdog.** Backoff doubles to a 16s cap and resets on a good handshake; the watchdog (fed through the backoff waits) resets the chip if the network task ever wedges.
 
-# drive it
-cd ../tools && make
-./fake_client -h 127.0.0.1 -p 9000 -u 9001 -d 0x1001 -r 10 -n 50   # stream + heartbeats
-./fake_client -p 9000 -d 0x2002 --bad-checksum -n 10               # ERROR x3 -> drop
-```
-The server also accepts `-T <seconds>` to self-shutdown after a deadline (a test
-aid for sandboxes that can't background a long-lived process).
+**Kernel driver**
+- **Spinlock over mutex, drop-oldest ring, misc device.** The locked section is a bounded O(1) record copy with no sleeping, and all user-copying happens outside the lock — so a spinlock is correct and cheaper. An empty ring blocks the reader on a wait queue (`-EAGAIN` for `O_NONBLOCK`, `-ERESTARTSYS` on a signal, plus `poll` support). `misc_register` auto-creates `/dev/telemetry` with far less boilerplate than a manual cdev. The ring logic is freestanding C, so the same object the kernel links is host unit-tested.
+- **ioctl + /proc.** `PL_IOC_GET_STATS`/`RESET` give tools a stable binary interface; `/proc/pulselink` shows the same counters as text. The `-s dev` sink `write(2)`s the native record straight in (no byte-swap — it's local IPC, unlike the network wire), and falls back to the in-memory ring if the module isn't loaded.
 
-### Full pipeline through the kernel (Stage 3, on a Linux VM)
-```
+**Imaging**
+- **Frames ride the same protocol.** A frame is just `ceil(w*h/1024)` `PKT_FRAME` packets — same header and checksum — so no new transport was needed. The reassembler is defensive (dimension caps, exact chunk lengths, dedup), then runs an edge-clamped 3×3 Sobel and writes an 8-bit grayscale BMP by hand (explicit little-endian, palette, bottom-up padded rows). `frame_e2e_test` drives a chunked frame through the real worker and checks the BMP byte-for-byte.
+
+</details>
+
+<details>
+<summary><b>Running the kernel pipeline & imaging (click to expand)</b></summary>
+
+**Full pipeline through the kernel** (on a Linux box with kernel headers):
+```bash
 cd kmod && make && sudo insmod pulselink_telemetry.ko   # creates /dev/telemetry
-../server/telemetryd -s dev &                           # readings -> /dev/telemetry
-./telemetry_cat                                         # live records stream out
-cat /proc/pulselink                                     # produced/dropped counters
+../server/telemetryd -s dev &                            # readings -> /dev/telemetry
+./telemetry_cat                                          # live records stream out
+cat /proc/pulselink                                      # produced/dropped counters
+sudo rmmod pulselink_telemetry
 ```
-Drive the server with the ESP32 firmware (Wokwi/real hardware) or `fake_client`.
 
-### Camera frames → edge BMPs (Stage 4)
+**Camera frames → edge BMPs:**
+```bash
+./telemetryd -F ./frames &
+cd tools && ./fake_client -p 9000 -d 0x1001 --frame      # send one synthetic frame
+ls ../frames/                                            # dev00001001_in.bmp + _edges.bmp
+cd ../imaging && make demo                               # or run imaging standalone
 ```
-./telemetryd -F ./frames &                          # -F enables frame output
-cd tools && ./fake_client -p 9000 -d 0x1001 --frame # send one synthetic frame
-ls ../frames/                                        # dev00001001_in.bmp + _edges.bmp
-cd ../imaging && make demo                           # or run the imaging path standalone
+
+**Fault-injection demos:**
+```bash
+./fake_client -p 9000 -d 0x2002 --bad-checksum -n 10     # server: ERROR x3 -> drop
+kill -USR1 $(pgrep telemetryd)                           # dump device table + stats
 ```
+
+Notes: the kernel `.ko` and the ESP32 `.ino` can't be built in a plain CI sandbox (no kernel headers / no xtensa toolchain) — the `.ko` runs on a real Linux box and the `.ino` runs in Wokwi. Everything else builds clean with `-Wall -Wextra -Werror -std=c11`.
+
+</details>
