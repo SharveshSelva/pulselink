@@ -1,0 +1,45 @@
+# build artifacts
+*.o
+*.a
+*.so
+
+# test + tool binaries (built from source via make)
+checksum_test
+telemetryd
+fake_client
+telemetry_cat
+telemetry_stat
+dt_test
+integ_test
+integ_test_tsan
+frame_e2e_test
+img_test
+pl_imaging
+tring_test
+fw_frame_test
+filter
+
+# PlatformIO / Wokwi build output
+.pio/
+*.elf
+*.bin
+
+# kernel module build
+*.ko
+*.mod
+*.mod.c
+*.mod.o
+*.symvers
+*.order
+.tmp_versions/
+*.cmd
+.*.cmd
+Module.symvers
+modules.order
+
+# debug / output
+*.bmp
+frames/
+core
+vgcore.*
+*.dSYM/
