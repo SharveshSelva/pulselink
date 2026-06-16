@@ -85,7 +85,7 @@ Packet types: HELLO / HELLO_ACK / SENSOR / ACK / HEARTBEAT (UDP) / FRAME / ERROR
 <summary><b>Design decisions</b></summary>
 
 **Protocol & checksum**
-- **RFC-1071 ones'-complement checksum** ("the IP checksum"): cheap (add + carry-fold + complement), endian-defined, catches all single-bit and most burst errors. Not cryptographic — guards against line noise, not tampering. Its self-verifying property is exercised directly by the unit test.
+- **RFC-1071 ones'-complement checksum** ("the IP checksum"): cheap (add + carry-fold + complement), endian-defined, catches all single-bit and most burst errors. Its verified directly by the unit test.
 - **`protocol.h` has no networking dependency.** Byte-swapping happens at call sites so the identical header compiles on the ESP32 and Linux. A `_Static_assert` on every struct size means a stray padding byte breaks the build instead of corrupting the wire.
 
 **Server concurrency**
