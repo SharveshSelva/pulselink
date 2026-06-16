@@ -1,0 +1,6 @@
+# For the Wokwi VS Code extension (local build route). The zero-setup path is
+# the Wokwi web playground — see README.md; that route ignores this file.
+[wokwi]
+version = 1
+firmware = "build/pulselink_fw.ino.bin"
+elf      = "build/pulselink_fw.ino.elf"
