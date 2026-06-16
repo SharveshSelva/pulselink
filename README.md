@@ -83,20 +83,6 @@ Packet types: HELLO / HELLO_ACK / SENSOR / ACK / HEARTBEAT (UDP) / FRAME / ERROR
 
 ---
 
-## Repo layout
-
-```
-pulselink/
-├── common/    protocol.h, checksum — the wire contract
-├── server/    telemetryd: listeners, workers, device table, record sinks
-├── tools/     fake_client (test device)
-├── firmware/  ESP32 / FreeRTOS firmware (Wokwi) + single-file sketch
-├── kmod/      /dev/telemetry character driver + telemetry_cat reader
-└── imaging/   3x3 convolution / Sobel / hand-rolled BMP writer
-```
-
----
-
 <details>
 <summary><b>Design decisions (the deep technical detail — click to expand)</b></summary>
 
