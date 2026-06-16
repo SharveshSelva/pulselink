@@ -66,7 +66,7 @@ cd imaging && make test                              # imaging path
 
 ## The message format (the wire protocol)
 
-Every packet starts with a 12-byte header (all multi-byte fields big-endian):
+Every packet starts with a 12-byte header:
 
 | offset | size | field |
 |---|---|---|
