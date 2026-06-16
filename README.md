@@ -14,7 +14,7 @@ ESP32 firmware  --TCP/UDP-->  telemetryd server  --write()-->  /dev/telemetry  -
 
 ## Components
 
-1. **The device** (`firmware/`) — a simulated ESP32 chip with a temperature/humidity sensor. Every 2 seconds it reads the sensor, wraps the numbers in a small packet, and sends it over WiFi. If the network drops, it keeps retrying calmly. Runs in [Wokwi](https://wokwi.com) — no physical hardware needed.
+1. **The device** (`firmware/`) — a simulated ESP32 chip with a temperature/humidity sensor. Every 2 seconds it reads the sensor, wraps the numbers in a small packet, and sends it over WiFi. If the network drops, it keeps retrying. Runs in [Wokwi](https://wokwi.com).
 
 2. **The server** (`server/` → `telemetryd`) — listens for packets, checks each one isn't corrupted, records which device sent what, and passes it along. Handles many devices at once.
 
