@@ -97,19 +97,6 @@ pulselink/
 
 ---
 
-## Milestones (all complete, 8/8)
-
-- **M1** wire protocol + RFC-1071 checksum
-- **M2** server: TCP listener + worker state machine + HELLO handshake; fake_client
-- **M3** server: device table, sensor handling + ACK-every-8th, UDP heartbeats, record sink; ThreadSanitizer-clean
-- **M4** firmware: FreeRTOS sampler → queue → reporter + heartbeat; framing host-tested vs server
-- **M5** firmware: WiFi + TCP uplink, reconnect-with-backoff, watchdog, OLED dashboard + status LED
-- **M6** kernel module: `/dev/telemetry`, write/read + wait queue, drop-oldest ring; `telemetry_cat`
-- **M7** kernel ioctl (stats/reset) + `/proc/pulselink`; server `-s dev` writes into `/dev/telemetry`
-- **M8** imaging: `PKT_FRAME` reassembly, 3×3 Sobel, hand-rolled BMP writer
-
----
-
 <details>
 <summary><b>Design decisions (the deep technical detail — click to expand)</b></summary>
 
