@@ -22,8 +22,7 @@ ESP32 firmware  --TCP/UDP-->  telemetryd server  --write()-->  /dev/telemetry  -
 
 4. **The reader** (`kmod/telemetry_cat`) — opens that mailbox file and prints each reading as it arrives.
 
-There's also a **bonus imaging path** (`imaging/`): the device can send a small picture, and the server runs edge-detection on it and saves a BMP — all written from scratch, no image libraries.
-
+There's also a **bonus imaging path** (`imaging/`): the device can send a small picture, and the server runs edge-detection on it and saves a BMP.
 A **test client** (`tools/fake_client`) stands in for the real device so the whole server + kernel pipeline can be demonstrated on one machine.
 
 ---
